@@ -60,7 +60,11 @@ async function telegram(method, body = {}) {
   return await response.json();
 }
 
-async function sendTelegramMessage(chatId, text, replyMarkup = undefined) {
+async function sendTelegramMessage(
+  chatId,
+  text,
+  replyMarkup = undefined
+) {
   const body = {
     chat_id: chatId,
     text
@@ -79,7 +83,10 @@ async function sendTelegramMessage(chatId, text, replyMarkup = undefined) {
   return result;
 }
 
-async function answerCallbackQuery(callbackQueryId, text) {
+async function answerCallbackQuery(
+  callbackQueryId,
+  text
+) {
   return await telegram("answerCallbackQuery", {
     callback_query_id: callbackQueryId,
     text,
@@ -87,7 +94,12 @@ async function answerCallbackQuery(callbackQueryId, text) {
   });
 }
 
-async function editTelegramMessage(chatId, messageId, text, replyMarkup = undefined) {
+async function editTelegramMessage(
+  chatId,
+  messageId,
+  text,
+  replyMarkup = undefined
+) {
   const body = {
     chat_id: chatId,
     message_id: messageId,
@@ -102,17 +114,26 @@ async function editTelegramMessage(chatId, messageId, text, replyMarkup = undefi
     };
   }
 
-  return await telegram("editMessageText", body);
+  return await telegram(
+    "editMessageText",
+    body
+  );
 }
 
-async function deleteTelegramMessage(chatId, messageId) {
+async function deleteTelegramMessage(
+  chatId,
+  messageId
+) {
   return await telegram("deleteMessage", {
     chat_id: chatId,
     message_id: messageId
   });
 }
 
-function bookingButtons(bookingId, status = "Kutilmoqda") {
+function bookingButtons(
+  bookingId,
+  status = "Kutilmoqda"
+) {
   if (status === "Kutilmoqda") {
     return {
       inline_keyboard: [
@@ -167,7 +188,13 @@ app.post("/api/bookings", async (req, res) => {
       slot
     } = req.body;
 
-    if (!name || !phone || !serviceTitle || !dayLabel || !slot) {
+    if (
+      !name ||
+      !phone ||
+      !serviceTitle ||
+      !dayLabel ||
+      !slot
+    ) {
       return res.status(400).json({
         ok: false,
         message: "Ma'lumotlar to'liq emas"
@@ -195,7 +222,10 @@ app.post("/api/bookings", async (req, res) => {
         slot,
         status
       )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Kutilmoqda')
+      VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+        'Kutilmoqda'
+      )
       ON CONFLICT (id) DO NOTHING
       `,
       [
@@ -232,31 +262,41 @@ app.post("/api/bookings", async (req, res) => {
 
 🆔 ID: ${bookingId}`;
 
-    const telegramResult = await sendTelegramMessage(
-      ADMIN_CHAT_ID,
-      message,
-      bookingButtons(bookingId, "Kutilmoqda")
-    );
+    const telegramResult =
+      await sendTelegramMessage(
+        ADMIN_CHAT_ID,
+        message,
+        bookingButtons(
+          bookingId,
+          "Kutilmoqda"
+        )
+      );
 
     if (!telegramResult.ok) {
       return res.status(500).json({
         ok: false,
-        message: "Navbat saqlandi, lekin Telegramga yuborilmadi"
+        message:
+          "Navbat saqlandi, lekin Telegramga yuborilmadi"
       });
     }
 
     res.json({
       ok: true,
-      message: "Navbat saqlandi va Telegramga yuborildi",
+      message:
+        "Navbat saqlandi va Telegramga yuborildi",
       bookingId
     });
 
   } catch (error) {
-    console.error("Booking xatosi:", error);
+    console.error(
+      "Booking xatosi:",
+      error
+    );
 
     res.status(500).json({
       ok: false,
-      message: "Serverda xatolik yuz berdi"
+      message:
+        "Serverda xatolik yuz berdi"
     });
   }
 });
@@ -279,7 +319,8 @@ async function handleCallbackQuery(query) {
 
     if (!msg) return;
 
-    const chatId = String(query.from.id);
+    const chatId =
+      String(query.from.id);
 
     if (chatId !== ADMIN_CHAT_ID) {
       await answerCallbackQuery(
@@ -291,10 +332,16 @@ async function handleCallbackQuery(query) {
 
     const data = query.data || "";
 
-    const [action, bookingId] = data.split(":");
+    const [
+      action,
+      bookingId
+    ] = data.split(":");
 
     if (!bookingId) {
-      await answerCallbackQuery(query.id, "❌ ID topilmadi");
+      await answerCallbackQuery(
+        query.id,
+        "❌ ID topilmadi"
+      );
       return;
     }
 
@@ -311,11 +358,10 @@ async function handleCallbackQuery(query) {
       return;
     }
 
-    const booking = result.rows[0];
-
     /* TASDIQLASH */
 
     if (action === "confirm") {
+
       await pool.query(
         `
         UPDATE bookings
@@ -335,7 +381,10 @@ async function handleCallbackQuery(query) {
         msg.chat.id,
         msg.message_id,
         newText,
-        bookingButtons(bookingId, "Tasdiqlangan")
+        bookingButtons(
+          bookingId,
+          "Tasdiqlangan"
+        )
       );
 
       await answerCallbackQuery(
@@ -349,6 +398,7 @@ async function handleCallbackQuery(query) {
     /* BEKOR QILISH */
 
     if (action === "cancel") {
+
       await pool.query(
         `
         UPDATE bookings
@@ -368,7 +418,10 @@ async function handleCallbackQuery(query) {
         msg.chat.id,
         msg.message_id,
         newText,
-        bookingButtons(bookingId, "Bekor qilingan")
+        bookingButtons(
+          bookingId,
+          "Bekor qilingan"
+        )
       );
 
       await answerCallbackQuery(
@@ -382,6 +435,7 @@ async function handleCallbackQuery(query) {
     /* O'CHIRISH */
 
     if (action === "delete") {
+
       await pool.query(
         `DELETE FROM bookings WHERE id = $1`,
         [bookingId]
@@ -406,6 +460,7 @@ async function handleCallbackQuery(query) {
     );
 
   } catch (error) {
+
     console.error(
       "Callback xatosi:",
       error
@@ -428,7 +483,9 @@ let pollingRunning = false;
 async function handleTelegramUpdate(update) {
 
   if (update.callback_query) {
-    await handleCallbackQuery(update.callback_query);
+    await handleCallbackQuery(
+      update.callback_query
+    );
     return;
   }
 
@@ -438,14 +495,18 @@ async function handleTelegramUpdate(update) {
     return;
   }
 
-  const chatId = String(msg.chat.id);
-  const text = msg.text.trim();
+  const chatId =
+    String(msg.chat.id);
+
+  const text =
+    msg.text.trim();
 
   console.log(
     `Telegram buyruq: ${text} | chat_id: ${chatId}`
   );
 
   if (!isAdmin(msg)) {
+
     await sendTelegramMessage(
       chatId,
       "⛔ Sizda admin huquqi yo'q."
@@ -454,7 +515,10 @@ async function handleTelegramUpdate(update) {
     return;
   }
 
+  /* START */
+
   if (text === "/start") {
+
     await sendTelegramMessage(
       chatId,
 `🦷 FARG'ONA STOMATOLOGIYA
@@ -468,7 +532,10 @@ Buyruqlarni ko'rish uchun:
     return;
   }
 
+  /* YORDAM */
+
   if (text === "/yordam") {
+
     await sendTelegramMessage(
       chatId,
 `📋 ADMIN BUYRUQLARI
@@ -485,66 +552,184 @@ Buyruqlarni ko'rish uchun:
 /oy
 ➡️ Shu oy navbatlari
 
+/statistika
+➡️ Umumiy statistika
+
 /yordam
 ➡️ Buyruqlar ro'yxati
 
 📌 Har bir yangi navbatda:
+
 ✅ Tasdiqlash
 ❌ Bekor qilish
-🗑️ O'chirish
-tugmalari mavjud.`
+🗑️ O'chirish`
     );
 
     return;
   }
 
+  /* BARCHA NAVBATLAR */
+
   if (text === "/navbatlar") {
+
     await sendBookingList(
       chatId,
       "BARCHA NAVBATLAR",
       ""
     );
+
     return;
   }
 
+  /* BUGUN */
+
   if (text === "/bugun") {
+
     await sendBookingList(
       chatId,
       "BUGUNGI NAVBATLAR",
       "today"
     );
+
     return;
   }
 
+  /* ERTAGA */
+
   if (text === "/ertaga") {
+
     await sendBookingList(
       chatId,
       "ERTANGI NAVBATLAR",
       "tomorrow"
     );
+
     return;
   }
 
+  /* OY */
+
   if (text === "/oy") {
+
     await sendBookingList(
       chatId,
       "SHU OY NAVBATLARI",
       "month"
     );
+
     return;
   }
 
+  /* STATISTIKA */
+
+  if (text === "/statistika") {
+
+    await sendStatistics(chatId);
+
+    return;
+  }
+
+  /* NOTO'G'RI BUYRUQ */
+
   if (text.startsWith("/")) {
+
     await sendTelegramMessage(
       chatId,
 `❓ Bunday buyruq topilmadi.
 
 Buyruqlar:
+
 /yordam
 /navbatlar
 /bugun
 /ertaga
-/oy`
+/oy
+/statistika`
+    );
+  }
+}
+
+/* =========================
+   STATISTIKA
+========================= */
+
+async function sendStatistics(chatId) {
+
+  try {
+
+    const result = await pool.query(`
+      SELECT
+        COUNT(*)::int AS total,
+
+        COUNT(*) FILTER (
+          WHERE status = 'Kutilmoqda'
+        )::int AS pending,
+
+        COUNT(*) FILTER (
+          WHERE status = 'Tasdiqlangan'
+        )::int AS confirmed,
+
+        COUNT(*) FILTER (
+          WHERE status = 'Bekor qilingan'
+        )::int AS cancelled,
+
+        COUNT(*) FILTER (
+          WHERE date_iso =
+            (NOW() AT TIME ZONE 'Asia/Tashkent')::date
+        )::int AS today,
+
+        COUNT(*) FILTER (
+          WHERE date_iso >=
+            DATE_TRUNC(
+              'month',
+              (NOW() AT TIME ZONE 'Asia/Tashkent')
+            )::date
+
+          AND date_iso <
+            (
+              DATE_TRUNC(
+                'month',
+                (NOW() AT TIME ZONE 'Asia/Tashkent')
+              )
+              + INTERVAL '1 month'
+            )::date
+        )::int AS this_month
+
+      FROM bookings
+    `);
+
+    const stats = result.rows[0];
+
+    const message =
+`📊 STOMATOLOGIYA STATISTIKASI
+
+📋 Jami navbatlar: ${stats.total} ta
+
+⏳ Kutilmoqda: ${stats.pending} ta
+
+✅ Tasdiqlangan: ${stats.confirmed} ta
+
+❌ Bekor qilingan: ${stats.cancelled} ta
+
+📅 Bugungi navbatlar: ${stats.today} ta
+
+📆 Shu oy: ${stats.this_month} ta`;
+
+    await sendTelegramMessage(
+      chatId,
+      message
+    );
+
+  } catch (error) {
+
+    console.error(
+      "Statistika xatosi:",
+      error
+    );
+
+    await sendTelegramMessage(
+      chatId,
+      "❌ Statistikani olishda xatolik yuz berdi."
     );
   }
 }
@@ -558,6 +743,7 @@ async function sendBookingList(
   title,
   filter
 ) {
+
   try {
 
     let query = "";
@@ -567,9 +753,10 @@ async function sendBookingList(
       query = `
         SELECT *
         FROM bookings
-        ORDER BY date_iso ASC NULLS LAST,
-                 slot ASC NULLS LAST,
-                 created_at DESC
+        ORDER BY
+          date_iso ASC NULLS LAST,
+          slot ASC NULLS LAST,
+          created_at DESC
         LIMIT 100
       `;
 
@@ -579,9 +766,14 @@ async function sendBookingList(
         SELECT *
         FROM bookings
         WHERE date_iso =
-          (NOW() AT TIME ZONE 'Asia/Tashkent')::date
-        ORDER BY slot ASC NULLS LAST,
-                 created_at ASC
+          (
+            NOW()
+            AT TIME ZONE 'Asia/Tashkent'
+          )::date
+
+        ORDER BY
+          slot ASC NULLS LAST,
+          created_at ASC
       `;
 
     } else if (filter === "tomorrow") {
@@ -590,9 +782,16 @@ async function sendBookingList(
         SELECT *
         FROM bookings
         WHERE date_iso =
-          ((NOW() AT TIME ZONE 'Asia/Tashkent')::date + 1)
-        ORDER BY slot ASC NULLS LAST,
-                 created_at ASC
+          (
+            (
+              NOW()
+              AT TIME ZONE 'Asia/Tashkent'
+            )::date + 1
+          )
+
+        ORDER BY
+          slot ASC NULLS LAST,
+          created_at ASC
       `;
 
     } else if (filter === "month") {
@@ -603,24 +802,35 @@ async function sendBookingList(
         WHERE date_iso >=
           DATE_TRUNC(
             'month',
-            (NOW() AT TIME ZONE 'Asia/Tashkent')
+            (
+              NOW()
+              AT TIME ZONE 'Asia/Tashkent'
+            )
           )::date
+
         AND date_iso <
           (
             DATE_TRUNC(
               'month',
-              (NOW() AT TIME ZONE 'Asia/Tashkent')
+              (
+                NOW()
+                AT TIME ZONE 'Asia/Tashkent'
+              )
             )
             + INTERVAL '1 month'
           )::date
-        ORDER BY date_iso ASC,
-                 slot ASC NULLS LAST
+
+        ORDER BY
+          date_iso ASC,
+          slot ASC NULLS LAST
       `;
     }
 
-    const result = await pool.query(query);
+    const result =
+      await pool.query(query);
 
     if (result.rows.length === 0) {
+
       await sendTelegramMessage(
         chatId,
 `${title}
@@ -638,16 +848,19 @@ async function sendBookingList(
 
 `;
 
-    result.rows.forEach((booking, index) => {
+    result.rows.forEach(
+      (booking, index) => {
 
-      const statusIcon =
-        booking.status === "Tasdiqlangan"
-          ? "✅"
-          : booking.status === "Bekor qilingan"
-          ? "❌"
-          : "⏳";
+        const statusIcon =
+          booking.status ===
+          "Tasdiqlangan"
+            ? "✅"
+            : booking.status ===
+              "Bekor qilingan"
+            ? "❌"
+            : "⏳";
 
-      message +=
+        message +=
 `${index + 1}. 👤 ${booking.name}
 📞 ${booking.phone}
 🦷 ${booking.service_title}
@@ -661,7 +874,8 @@ ${statusIcon} Holat: ${booking.status || "Kutilmoqda"}
 
 `;
 
-    });
+      }
+    );
 
     await sendLongTelegramMessage(
       chatId,
@@ -705,12 +919,15 @@ async function sendLongTelegramMessage(
 
   let current = "";
 
-  const lines = text.split("\n");
+  const lines =
+    text.split("\n");
 
   for (const line of lines) {
 
     if (
-      current.length + line.length + 1 >
+      current.length +
+      line.length +
+      1 >
       maxLength
     ) {
 
@@ -750,7 +967,8 @@ async function startTelegramPolling() {
 
   try {
 
-    const me = await telegram("getMe");
+    const me =
+      await telegram("getMe");
 
     if (!me.ok) {
 
@@ -770,17 +988,21 @@ async function startTelegramPolling() {
 
       try {
 
-        const result = await telegram(
-          "getUpdates",
-          {
-            offset: telegramOffset,
-            timeout: 30,
-            allowed_updates: [
-              "message",
-              "callback_query"
-            ]
-          }
-        );
+        const result =
+          await telegram(
+            "getUpdates",
+            {
+              offset:
+                telegramOffset,
+
+              timeout: 30,
+
+              allowed_updates: [
+                "message",
+                "callback_query"
+              ]
+            }
+          );
 
         if (!result.ok) {
 
@@ -790,13 +1012,20 @@ async function startTelegramPolling() {
           );
 
           await new Promise(
-            resolve => setTimeout(resolve, 5000)
+            resolve =>
+              setTimeout(
+                resolve,
+                5000
+              )
           );
 
           continue;
         }
 
-        for (const update of result.result) {
+        for (
+          const update
+          of result.result
+        ) {
 
           telegramOffset =
             update.update_id + 1;
@@ -814,7 +1043,11 @@ async function startTelegramPolling() {
         );
 
         await new Promise(
-          resolve => setTimeout(resolve, 5000)
+          resolve =>
+            setTimeout(
+              resolve,
+              5000
+            )
         );
       }
     }
@@ -838,14 +1071,17 @@ async function startServer() {
 
     await initDatabase();
 
-    app.listen(PORT, () => {
+    app.listen(
+      PORT,
+      () => {
 
-      console.log(
-        `Server ishga tushdi: http://localhost:${PORT}`
-      );
+        console.log(
+          `Server ishga tushdi: http://localhost:${PORT}`
+        );
 
-      startTelegramPolling();
-    });
+        startTelegramPolling();
+      }
+    );
 
   } catch (error) {
 
