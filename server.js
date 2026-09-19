@@ -1,28 +1,72 @@
+require("dotenv").config();
+
 const express = require("express");
-const dotenv = require("dotenv");
+const helmet = require("helmet");
+const rateLimit = require("express-rate-limit");
 const { Pool } = require("pg");
 
-dotenv.config();
-
 const app = express();
-const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
-app.use(express.static(__dirname));
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : false
-});
-
+const PORT = Number(process.env.PORT || 10000);
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_CHAT_ID = String(process.env.CHAT_ID || "");
+const DATABASE_URL = process.env.DATABASE_URL;
 
-/* =========================
+if (!BOT_TOKEN) {
+  console.error("XATO: BOT_TOKEN Render Environment Variables ichida topilmadi.");
+  process.exit(1);
+}
+
+if (!ADMIN_CHAT_ID) {
+  console.error("XATO: CHAT_ID Render Environment Variables ichida topilmadi.");
+  process.exit(1);
+}
+
+if (!DATABASE_URL) {
+  console.error("XATO: DATABASE_URL Render Environment Variables ichida topilmadi.");
+  process.exit(1);
+}
+
+/* =========================================================
+   SECURITY
+========================================================= */
+
+app.disable("x-powered-by");
+
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false
+  })
+);
+
+app.use(express.json({ limit: "20kb" }));
+
+const bookingLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: {
+    ok: false,
+    error:
+      "Juda ko'p so'rov yuborildi. Iltimos, birozdan keyin qayta urinib ko'ring."
+  }
+});
+
+/* =========================================================
    DATABASE
-========================= */
+========================================================= */
+
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: {
+    rejectUnauthorized: false
+  },
+  max: 5,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000
+});
 
 async function initDatabase() {
   await pool.query(`
@@ -50,218 +94,405 @@ async function initDatabase() {
   console.log("PostgreSQL: bookings jadvali tayyor");
 }
 
-/* =========================
+/* =========================================================
    TELEGRAM API
-========================= */
+========================================================= */
 
 async function telegram(method, body = {}) {
-  const url =
-    `https://api.telegram.org/bot${BOT_TOKEN}/${method}`;
+  const response = await fetch(
+    `https://api.telegram.org/bot${BOT_TOKEN}/${method}`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    }
+  );
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(body)
-  });
+  const data = await response.json();
 
-  return await response.json();
-}
-
-/* =========================
-   TELEGRAM MESSAGE
-========================= */
-
-async function sendTelegramMessage(
-  chatId,
-  text,
-  replyMarkup = undefined
-) {
-  const body = {
-    chat_id: chatId,
-    text
-  };
-
-  if (replyMarkup) {
-    body.reply_markup = replyMarkup;
-  }
-
-  const result =
-    await telegram("sendMessage", body);
-
-  if (!result.ok) {
-    console.error(
-      "Telegram xatosi:",
-      result
+  if (!data.ok) {
+    throw new Error(
+      data.description || `Telegram API xatosi: ${method}`
     );
   }
 
-  return result;
+  return data.result;
 }
 
-/* =========================
-   CALLBACK JAVOBI
-========================= */
-
-async function answerCallbackQuery(
-  callbackQueryId,
-  text
-) {
-  return await telegram(
-    "answerCallbackQuery",
-    {
-      callback_query_id: callbackQueryId,
-      text,
-      show_alert: false
-    }
-  );
+async function sendTelegramMessage(chatId, text, extra = {}) {
+  return telegram("sendMessage", {
+    chat_id: chatId,
+    text,
+    ...extra
+  });
 }
 
-/* =========================
-   TELEGRAM XABARINI O'ZGARTIRISH
-========================= */
+async function answerCallbackQuery(callbackQueryId, text = "") {
+  return telegram("answerCallbackQuery", {
+    callback_query_id: callbackQueryId,
+    text
+  });
+}
 
 async function editTelegramMessage(
   chatId,
   messageId,
   text,
-  replyMarkup = undefined
+  extra = {}
 ) {
-  const body = {
+  return telegram("editMessageText", {
     chat_id: chatId,
     message_id: messageId,
-    text
-  };
-
-  if (replyMarkup) {
-    body.reply_markup = replyMarkup;
-  } else {
-    body.reply_markup = {
-      inline_keyboard: []
-    };
-  }
-
-  return await telegram(
-    "editMessageText",
-    body
-  );
+    text,
+    ...extra
+  });
 }
 
-/* =========================
-   TELEGRAM XABARINI O'CHIRISH
-========================= */
-
-async function deleteTelegramMessage(
-  chatId,
-  messageId
-) {
-  return await telegram(
-    "deleteMessage",
-    {
-      chat_id: chatId,
-      message_id: messageId
-    }
-  );
+async function deleteTelegramMessage(chatId, messageId) {
+  return telegram("deleteMessage", {
+    chat_id: chatId,
+    message_id: messageId
+  });
 }
 
-/* =========================
-   NAVBAT TUGMALARI
-========================= */
-
-function bookingButtons(
-  bookingId,
-  status = "Kutilmoqda"
-) {
-
-  if (status === "Kutilmoqda") {
-
-    return {
-      inline_keyboard: [
-        [
-          {
-            text: "✅ Tasdiqlash",
-            callback_data:
-              `confirm:${bookingId}`
-          },
-          {
-            text: "❌ Bekor qilish",
-            callback_data:
-              `cancel:${bookingId}`
-          }
-        ],
-        [
-          {
-            text: "🗑️ O‘chirish",
-            callback_data:
-              `delete:${bookingId}`
-          }
-        ]
-      ]
-    };
-
-  }
-
+function bookingButtons(id) {
   return {
     inline_keyboard: [
       [
         {
+          text: "✅ Tasdiqlash",
+          callback_data: `confirm:${id}`
+        },
+        {
+          text: "❌ Bekor qilish",
+          callback_data: `cancel:${id}`
+        }
+      ],
+      [
+        {
           text: "🗑️ O‘chirish",
-          callback_data:
-            `delete:${bookingId}`
+          callback_data: `delete:${id}`
         }
       ]
     ]
   };
 }
 
-/* =========================
-   YANGI NAVBAT
-========================= */
+/* =========================================================
+   VALIDATION
+========================================================= */
+
+const ALLOWED_DOCTORS = new Set([
+  "karimov",
+  "aliyeva",
+  "rahimov",
+  "yusupova",
+  "nazarov"
+]);
+
+const ALLOWED_SERVICES = new Set([
+  "Terapevtik davolash",
+  "Professional tozalash",
+  "Implantatsiya",
+  "Ortopediya (protez, vinir)",
+  "Ortodontiya",
+  "Bolalar stomatologiyasi"
+]);
+
+const ALLOWED_TARIFFS = {
+  Standart: new Set([
+    150000,
+    180000,
+    250000,
+    900000,
+    3500000,
+    4000000
+  ]),
+
+  Komfort: new Set([
+    220000,
+    280000,
+    380000,
+    1400000,
+    5200000,
+    6500000
+  ]),
+
+  Premium: new Set([
+    320000,
+    400000,
+    550000,
+    2100000,
+    7800000,
+    9000000
+  ])
+};
+
+const ALLOWED_SLOTS = new Set([
+  "09:00",
+  "10:00",
+  "11:00",
+  "12:00",
+  "14:00",
+  "15:00",
+  "16:00",
+  "17:00",
+  "18:00",
+  "19:00"
+]);
+
+function isValidId(value) {
+  return (
+    typeof value === "string" &&
+    value.length >= 10 &&
+    value.length <= 100 &&
+    /^[a-zA-Z0-9_-]+$/.test(value)
+  );
+}
+
+function cleanText(value, max = 200) {
+  if (typeof value !== "string") return "";
+
+  return value
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, max);
+}
+
+function isValidName(name) {
+  if (!name || name.length < 2 || name.length > 100) {
+    return false;
+  }
+
+  return /^[\p{L}\p{M}0-9 .'-]+$/u.test(name);
+}
+
+function isValidPhone(phone) {
+  return /^\+998\d{9}$/.test(phone);
+}
+
+function isValidDateISO(value) {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(value)
+  ) {
+    return false;
+  }
+
+  const date = new Date(`${value}T00:00:00Z`);
+
+  return (
+    !Number.isNaN(date.getTime()) &&
+    date.toISOString().slice(0, 10) === value
+  );
+}
+
+function isValidDayLabel(value) {
+  return (
+    typeof value === "string" &&
+    value.length >= 3 &&
+    value.length <= 50 &&
+    /^[\p{L}\p{M}0-9., :'-]+$/u.test(value)
+  );
+}
+
+/* =========================================================
+   HEALTH CHECK
+========================================================= */
+
+app.get("/health", async (req, res) => {
+  try {
+    await pool.query("SELECT 1");
+
+    res.json({
+      ok: true,
+      database: "ok"
+    });
+  } catch (error) {
+    console.error(
+      "Health database error:",
+      error.message
+    );
+
+    res.status(503).json({
+      ok: false,
+      database: "error"
+    });
+  }
+});
+
+/* =========================================================
+   BOOKING API
+========================================================= */
 
 app.post(
   "/api/bookings",
+  bookingLimiter,
   async (req, res) => {
-
     try {
+      const body = req.body || {};
 
-      const {
-        id,
-        name,
-        phone,
-        serviceTitle,
-        tariffName,
-        tariffPrice,
-        doctorId,
-        dayLabel,
-        dateISO,
-        slot
-      } = req.body;
+      const id = cleanText(body.id, 100);
+      const name = cleanText(body.name, 100);
+      const phone = cleanText(body.phone, 30);
+      const serviceTitle = cleanText(
+        body.serviceTitle,
+        100
+      );
+      const tariffName = cleanText(
+        body.tariffName,
+        30
+      );
+      const doctorId = cleanText(
+        body.doctorId,
+        30
+      );
+      const dayLabel = cleanText(
+        body.dayLabel,
+        50
+      );
+      const dateISO = cleanText(
+        body.dateISO,
+        10
+      );
+      const slot = cleanText(
+        body.slot,
+        10
+      );
 
-      if (
-        !name ||
-        !phone ||
-        !serviceTitle ||
-        !dayLabel ||
-        !slot
-      ) {
+      const tariffPrice = Number(
+        body.tariffPrice
+      );
 
+      /* ID */
+
+      if (!isValidId(id)) {
         return res.status(400).json({
           ok: false,
-          message:
-            "Ma'lumotlar to'liq emas"
+          error: "Booking ID noto'g'ri."
         });
       }
 
-      const bookingId =
-        id ||
-        `bk_${Date.now()}_${Math.random()
-          .toString(16)
-          .slice(2)}`;
+      /* NAME */
+
+      if (!isValidName(name)) {
+        return res.status(400).json({
+          ok: false,
+          error: "Ism noto'g'ri."
+        });
+      }
+
+      /* PHONE */
+
+      if (!isValidPhone(phone)) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            "Telefon raqami +998XXXXXXXXX formatida bo'lishi kerak."
+        });
+      }
+
+      /* SERVICE */
+
+      if (!ALLOWED_SERVICES.has(serviceTitle)) {
+        return res.status(400).json({
+          ok: false,
+          error: "Xizmat turi noto'g'ri."
+        });
+      }
+
+      /* DOCTOR */
+
+      if (!ALLOWED_DOCTORS.has(doctorId)) {
+        return res.status(400).json({
+          ok: false,
+          error: "Shifokor noto'g'ri."
+        });
+      }
+
+      /* TARIFF */
+
+      if (
+        !Object.prototype.hasOwnProperty.call(
+          ALLOWED_TARIFFS,
+          tariffName
+        )
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: "Tarif noto'g'ri."
+        });
+      }
+
+      /* PRICE */
+
+      if (
+        !Number.isSafeInteger(tariffPrice) ||
+        !ALLOWED_TARIFFS[tariffName].has(
+          tariffPrice
+        )
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: "Tarif narxi noto'g'ri."
+        });
+      }
+
+      /* DAY */
+
+      if (!isValidDayLabel(dayLabel)) {
+        return res.status(400).json({
+          ok: false,
+          error: "Sana ma'lumoti noto'g'ri."
+        });
+      }
+
+      /* DATE */
+
+      if (!isValidDateISO(dateISO)) {
+        return res.status(400).json({
+          ok: false,
+          error: "Sana formati noto'g'ri."
+        });
+      }
+
+      /* TIME */
+
+      if (!ALLOWED_SLOTS.has(slot)) {
+        return res.status(400).json({
+          ok: false,
+          error: "Vaqt noto'g'ri."
+        });
+      }
+
+      /* DUPLICATE BOOKING */
+
+      const existing = await pool.query(
+        `
+        SELECT id
+        FROM bookings
+        WHERE id = $1
+        LIMIT 1
+        `,
+        [id]
+      );
+
+      if (existing.rowCount > 0) {
+        return res.status(409).json({
+          ok: false,
+          error:
+            "Bu booking allaqachon mavjud."
+        });
+      }
+
+      /* INSERT */
 
       await pool.query(
         `
-        INSERT INTO bookings (
+        INSERT INTO bookings
+        (
           id,
           name,
           phone,
@@ -274,285 +505,493 @@ app.post(
           slot,
           status
         )
-        VALUES (
-          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+        VALUES
+        (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
           'Kutilmoqda'
         )
-        ON CONFLICT (id) DO NOTHING
         `,
         [
-          bookingId,
+          id,
           name,
           phone,
           serviceTitle,
-          tariffName || "",
-          tariffPrice || 0,
-          doctorId || "",
+          tariffName,
+          tariffPrice,
+          doctorId,
           dayLabel,
-          dateISO || null,
+          dateISO,
           slot
         ]
       );
 
-      const message =
-`🦷 YANGI NAVBAT
+      /* TELEGRAM */
 
-👤 Bemor: ${name}
-📞 Telefon: ${phone}
+      const telegramText =
+        `🦷 YANGI NAVBAT\n\n` +
+        `👤 Ism: ${name}\n` +
+        `📞 Telefon: ${phone}\n` +
+        `🩺 Xizmat: ${serviceTitle}\n` +
+        `💳 Tarif: ${tariffName}\n` +
+        `💰 Narx: ${tariffPrice.toLocaleString(
+          "ru-RU"
+        )} so'm\n` +
+        `👨‍⚕️ Shifokor: ${doctorId}\n` +
+        `📅 Sana: ${dayLabel}\n` +
+        `⏰ Vaqt: ${slot}\n\n` +
+        `🆔 ID: ${id}\n` +
+        `📌 Status: Kutilmoqda`;
 
-🦷 Xizmat: ${serviceTitle}
-💳 Tarif: ${tariffName || "-"}
-💰 Narx: ${tariffPrice || "-"}
-
-👨‍⚕️ Shifokor: ${doctorId || "-"}
-
-📅 Sana: ${dayLabel}
-📆 Sana ISO: ${dateISO || "-"}
-🕐 Vaqt: ${slot}
-
-📌 Holat: Kutilmoqda
-
-🆔 ID: ${bookingId}`;
-
-      const telegramResult =
+      try {
         await sendTelegramMessage(
           ADMIN_CHAT_ID,
-          message,
-          bookingButtons(
-            bookingId,
-            "Kutilmoqda"
-          )
+          telegramText,
+          {
+            reply_markup:
+              bookingButtons(id)
+          }
         );
-
-      if (!telegramResult.ok) {
-
-        return res.status(500).json({
-          ok: false,
-          message:
-            "Navbat saqlandi, lekin Telegramga yuborilmadi"
-        });
+      } catch (telegramError) {
+        console.error(
+          "Telegram xatosi:",
+          telegramError.message
+        );
       }
 
-      res.json({
+      return res.status(201).json({
         ok: true,
-        message:
-          "Navbat saqlandi va Telegramga yuborildi",
-        bookingId
+        id
       });
-
     } catch (error) {
-
       console.error(
-        "Booking xatosi:",
-        error
+        "Booking API error:",
+        error.message
       );
 
-      res.status(500).json({
+      return res.status(500).json({
         ok: false,
-        message:
-          "Serverda xatolik yuz berdi"
+        error:
+          "Server xatosi. Iltimos, keyinroq qayta urinib ko'ring."
       });
     }
   }
 );
 
-/* =========================
+/* =========================================================
    ADMIN
-========================= */
+========================================================= */
 
-function isAdmin(msg) {
-  return (
-    String(msg.chat.id) ===
-    ADMIN_CHAT_ID
-  );
+function isAdmin(chatId) {
+  return String(chatId) === ADMIN_CHAT_ID;
 }
 
-/* =========================
-   CALLBACK
-========================= */
+/* =========================================================
+   TELEGRAM CALLBACK BUTTONS
+========================================================= */
 
-async function handleCallbackQuery(query) {
+async function handleCallbackQuery(
+  callbackQuery
+) {
+  const chatId = String(
+    callbackQuery.message?.chat?.id || ""
+  );
+
+  const messageId =
+    callbackQuery.message?.message_id;
+
+  const data =
+    callbackQuery.data || "";
+
+  if (!isAdmin(chatId)) {
+    await answerCallbackQuery(
+      callbackQuery.id,
+      "Sizda bu amalni bajarish huquqi yo'q."
+    );
+
+    return;
+  }
+
+  const match =
+    /^(confirm|cancel|delete):([a-zA-Z0-9_-]+)$/.exec(
+      data
+    );
+
+  if (!match) {
+    await answerCallbackQuery(
+      callbackQuery.id,
+      "Noma'lum amal."
+    );
+
+    return;
+  }
+
+  const action = match[1];
+  const bookingId = match[2];
 
   try {
+    const result = await pool.query(
+      `
+      SELECT
+        id,
+        name,
+        phone,
+        service_title,
+        tariff_name,
+        tariff_price,
+        doctor_id,
+        day_label,
+        slot,
+        status
+      FROM bookings
+      WHERE id = $1
+      `,
+      [bookingId]
+    );
 
-    const msg = query.message;
-
-    if (!msg) return;
-
-    const chatId =
-      String(query.from.id);
-
-    if (chatId !== ADMIN_CHAT_ID) {
-
+    if (result.rowCount === 0) {
       await answerCallbackQuery(
-        query.id,
-        "⛔ Sizda admin huquqi yo'q."
+        callbackQuery.id,
+        "Navbat topilmadi."
       );
 
       return;
     }
 
-    const data =
-      query.data || "";
+    const booking = result.rows[0];
 
-    const [
-      action,
-      bookingId
-    ] = data.split(":");
-
-    if (!bookingId) {
-
-      await answerCallbackQuery(
-        query.id,
-        "❌ ID topilmadi"
-      );
-
-      return;
-    }
-
-    const result =
-      await pool.query(
-        `SELECT *
-         FROM bookings
-         WHERE id = $1`,
-        [bookingId]
-      );
-
-    if (result.rows.length === 0) {
-
-      await answerCallbackQuery(
-        query.id,
-        "❌ Bu navbat topilmadi."
-      );
-
-      return;
-    }
-
-    /* =====================
-       TASDIQLASH
-    ===================== */
-
-    if (action === "confirm") {
-
-      await pool.query(
-        `
-        UPDATE bookings
-        SET status = 'Tasdiqlangan'
-        WHERE id = $1
-        `,
-        [bookingId]
-      );
-
-      const newText =
-`${msg.text}
-
-━━━━━━━━━━━━━━
-✅ HOLAT: TASDIQLANGAN`;
-
-      await editTelegramMessage(
-        msg.chat.id,
-        msg.message_id,
-        newText,
-        bookingButtons(
-          bookingId,
-          "Tasdiqlangan"
-        )
-      );
-
-      await answerCallbackQuery(
-        query.id,
-        "✅ Navbat tasdiqlandi"
-      );
-
-      return;
-    }
-
-    /* =====================
-       BEKOR QILISH
-    ===================== */
-
-    if (action === "cancel") {
-
-      await pool.query(
-        `
-        UPDATE bookings
-        SET status = 'Bekor qilingan'
-        WHERE id = $1
-        `,
-        [bookingId]
-      );
-
-      const newText =
-`${msg.text}
-
-━━━━━━━━━━━━━━
-❌ HOLAT: BEKOR QILINGAN`;
-
-      await editTelegramMessage(
-        msg.chat.id,
-        msg.message_id,
-        newText,
-        bookingButtons(
-          bookingId,
-          "Bekor qilingan"
-        )
-      );
-
-      await answerCallbackQuery(
-        query.id,
-        "❌ Navbat bekor qilindi"
-      );
-
-      return;
-    }
-
-    /* =====================
-       O'CHIRISH
-    ===================== */
+    /* DELETE */
 
     if (action === "delete") {
-
       await pool.query(
-        `DELETE FROM bookings
-         WHERE id = $1`,
+        "DELETE FROM bookings WHERE id = $1",
         [bookingId]
       );
 
-      await deleteTelegramMessage(
-        msg.chat.id,
-        msg.message_id
-      );
+      try {
+        await deleteTelegramMessage(
+          chatId,
+          messageId
+        );
+      } catch (_) {
+        await editTelegramMessage(
+          chatId,
+          messageId,
+          `${messageText(
+            booking
+          )}\n\n🗑️ O‘chirildi.`
+        );
+      }
 
       await answerCallbackQuery(
-        query.id,
-        "🗑️ Navbat o‘chirildi"
+        callbackQuery.id,
+        "Navbat o‘chirildi."
       );
 
       return;
     }
 
-    await answerCallbackQuery(
-      query.id,
-      "❓ Noma'lum buyruq"
+    /* STATUS */
+
+    const newStatus =
+      action === "confirm"
+        ? "Tasdiqlangan"
+        : "Bekor qilingan";
+
+    await pool.query(
+      `
+      UPDATE bookings
+      SET status = $1
+      WHERE id = $2
+      `,
+      [
+        newStatus,
+        bookingId
+      ]
     );
 
+    await editTelegramMessage(
+      chatId,
+      messageId,
+      `${messageText(
+        booking
+      )}\n\n📌 Status: ${newStatus}`
+    );
+
+    await answerCallbackQuery(
+      callbackQuery.id,
+      action === "confirm"
+        ? "Navbat tasdiqlandi."
+        : "Navbat bekor qilindi."
+    );
   } catch (error) {
-
     console.error(
-      "Callback xatosi:",
-      error
+      "Callback error:",
+      error.message
     );
 
     await answerCallbackQuery(
-      query.id,
-      "❌ Xatolik yuz berdi"
+      callbackQuery.id,
+      "Amalni bajarishda xatolik yuz berdi."
     );
   }
 }
 
-/* =========================
-   TELEGRAM BUYRUQLARI
-========================= */
+function messageText(booking) {
+  return (
+    `🦷 NAVBAT\n\n` +
+    `👤 Ism: ${booking.name}\n` +
+    `📞 Telefon: ${booking.phone}\n` +
+    `🩺 Xizmat: ${booking.service_title}\n` +
+    `💳 Tarif: ${booking.tariff_name}\n` +
+    `💰 Narx: ${Number(
+      booking.tariff_price
+    ).toLocaleString("ru-RU")} so'm\n` +
+    `👨‍⚕️ Shifokor: ${booking.doctor_id}\n` +
+    `📅 Sana: ${booking.day_label}\n` +
+    `⏰ Vaqt: ${booking.slot}\n` +
+    `🆔 ID: ${booking.id}`
+  );
+}
+
+/* =========================================================
+   TELEGRAM BOOKING LIST
+========================================================= */
+
+async function sendBookingList(
+  chatId,
+  whereSql = "",
+  params = [],
+  title = "NAVBATLAR"
+) {
+  if (!isAdmin(chatId)) return;
+
+  const result = await pool.query(
+    `
+    SELECT
+      id,
+      name,
+      phone,
+      service_title,
+      tariff_name,
+      tariff_price,
+      doctor_id,
+      day_label,
+      slot,
+      status
+    FROM bookings
+    ${whereSql}
+    ORDER BY
+      date_iso ASC NULLS LAST,
+      slot ASC NULLS LAST,
+      created_at DESC
+    `,
+    params
+  );
+
+  if (result.rowCount === 0) {
+    await sendTelegramMessage(
+      chatId,
+      `📭 ${title}\n\nHozircha navbatlar yo'q.`
+    );
+
+    return;
+  }
+
+  const lines = [
+    `📋 ${title}`,
+    `Jami: ${result.rowCount}`,
+    ""
+  ];
+
+  for (const b of result.rows) {
+    lines.push(
+      `👤 ${b.name}`,
+      `📞 ${b.phone}`,
+      `🩺 ${b.service_title}`,
+      `💳 ${b.tariff_name} — ${Number(
+        b.tariff_price
+      ).toLocaleString("ru-RU")} so'm`,
+      `👨‍⚕️ ${b.doctor_id}`,
+      `📅 ${b.day_label} — ${b.slot}`,
+      `📌 ${b.status}`,
+      `🆔 ${b.id}`,
+      "────────────"
+    );
+  }
+
+  await sendLongTelegramMessage(
+    chatId,
+    lines.join("\n")
+  );
+}
+
+async function sendLongTelegramMessage(
+  chatId,
+  text
+) {
+  const maxLength = 3800;
+
+  for (
+    let i = 0;
+    i < text.length;
+    i += maxLength
+  ) {
+    await sendTelegramMessage(
+      chatId,
+      text.slice(i, i + maxLength)
+    );
+  }
+}
+
+/* =========================================================
+   STATISTICS
+========================================================= */
+
+async function sendStatistics(chatId) {
+  if (!isAdmin(chatId)) return;
+
+  const result = await pool.query(`
+    SELECT
+      COUNT(*)::int AS total,
+
+      COUNT(*) FILTER (
+        WHERE status = 'Kutilmoqda'
+      )::int AS pending,
+
+      COUNT(*) FILTER (
+        WHERE status = 'Tasdiqlangan'
+      )::int AS confirmed,
+
+      COUNT(*) FILTER (
+        WHERE status = 'Bekor qilingan'
+      )::int AS cancelled,
+
+      COUNT(*) FILTER (
+        WHERE date_iso =
+          (
+            CURRENT_TIMESTAMP
+            AT TIME ZONE 'Asia/Tashkent'
+          )::date
+      )::int AS today,
+
+      COUNT(*) FILTER (
+        WHERE date_iso >=
+          date_trunc(
+            'month',
+            CURRENT_TIMESTAMP
+            AT TIME ZONE 'Asia/Tashkent'
+          )::date
+
+        AND date_iso <
+          (
+            date_trunc(
+              'month',
+              CURRENT_TIMESTAMP
+              AT TIME ZONE 'Asia/Tashkent'
+            )
+            + INTERVAL '1 month'
+          )::date
+      )::int AS month
+
+    FROM bookings
+  `);
+
+  const s = result.rows[0];
+
+  await sendTelegramMessage(
+    chatId,
+    `📊 STATISTIKA\n\n` +
+      `📋 Jami: ${s.total}\n` +
+      `⏳ Kutilmoqda: ${s.pending}\n` +
+      `✅ Tasdiqlangan: ${s.confirmed}\n` +
+      `❌ Bekor qilingan: ${s.cancelled}\n` +
+      `📅 Bugun: ${s.today}\n` +
+      `🗓️ Shu oy: ${s.month}`
+  );
+}
+
+/* =========================================================
+   DOCTORS STATISTICS
+========================================================= */
+
+async function sendDoctorsStatistics(
+  chatId
+) {
+  if (!isAdmin(chatId)) return;
+
+  const result = await pool.query(`
+    SELECT
+      COALESCE(
+        NULLIF(doctor_id, ''),
+        'Noma'lum'
+      ) AS doctor,
+
+      COUNT(*)::int AS total,
+
+      COUNT(*) FILTER (
+        WHERE status = 'Kutilmoqda'
+      )::int AS pending,
+
+      COUNT(*) FILTER (
+        WHERE status = 'Tasdiqlangan'
+      )::int AS confirmed,
+
+      COUNT(*) FILTER (
+        WHERE status = 'Bekor qilingan'
+      )::int AS cancelled
+
+    FROM bookings
+
+    GROUP BY doctor_id
+
+    ORDER BY
+      total DESC,
+      doctor ASC
+  `);
+
+  if (result.rowCount === 0) {
+    await sendTelegramMessage(
+      chatId,
+      "👨‍⚕️ Shifokorlar bo'yicha hali ma'lumot yo'q."
+    );
+
+    return;
+  }
+
+  const lines = [
+    "👨‍⚕️ SHIFOKORLAR BO‘YICHA STATISTIKA",
+    ""
+  ];
+
+  for (const row of result.rows) {
+    lines.push(
+      `👨‍⚕️ ${row.doctor}`,
+      `📋 Jami: ${row.total}`,
+      `⏳ Kutilmoqda: ${row.pending}`,
+      `✅ Tasdiqlangan: ${row.confirmed}`,
+      `❌ Bekor: ${row.cancelled}`,
+      "────────────"
+    );
+  }
+
+  await sendLongTelegramMessage(
+    chatId,
+    lines.join("\n")
+  );
+}
+
+/* =========================================================
+   TELEGRAM POLLING
+========================================================= */
 
 let telegramOffset = 0;
 let pollingRunning = false;
@@ -560,11 +999,9 @@ let pollingRunning = false;
 async function handleTelegramUpdate(
   update
 ) {
-
   /* CALLBACK */
 
   if (update.callback_query) {
-
     await handleCallbackQuery(
       update.callback_query
     );
@@ -572,178 +1009,162 @@ async function handleTelegramUpdate(
     return;
   }
 
-  const msg =
-    update.message;
+  const message = update.message;
 
-  if (
-    !msg ||
-    !msg.text
-  ) {
-    return;
-  }
+  if (!message?.text) return;
 
-  const chatId =
-    String(msg.chat.id);
-
-  const text =
-    msg.text.trim();
-
-  console.log(
-    `Telegram buyruq: ${text} | chat_id: ${chatId}`
+  const chatId = String(
+    message.chat.id
   );
 
-  /* ADMIN TEKSHIRISH */
+  const text = message.text.trim();
 
-  if (!isAdmin(msg)) {
+  /* ADMIN CHECK */
 
+  if (!isAdmin(chatId)) {
     await sendTelegramMessage(
       chatId,
-      "⛔ Sizda admin huquqi yo'q."
+      "⛔ Bu bot faqat administrator uchun."
     );
 
     return;
   }
 
-  /* =====================
-     START
-  ===================== */
+  const command =
+    text
+      .split(/\s+/)[0]
+      .toLowerCase();
 
-  if (text === "/start") {
+  /* START */
 
+  if (command === "/start") {
     await sendTelegramMessage(
       chatId,
-`🦷 FARG'ONA STOMATOLOGIYA
-
-Admin paneliga xush kelibsiz.
-
-Buyruqlarni ko'rish uchun:
-/yordam`
+      `🦷 Farg‘ona stomatologiya admin botiga xush kelibsiz!\n\n` +
+        `/yordam — buyruqlar ro‘yxati\n` +
+        `/navbatlar — barcha navbatlar\n` +
+        `/bugun — bugungi navbatlar\n` +
+        `/ertaga — ertangi navbatlar\n` +
+        `/oy — shu oydagi navbatlar\n` +
+        `/statistika — umumiy statistika\n` +
+        `/shifokorlar — shifokorlar statistikasi`
     );
 
     return;
   }
 
-  /* =====================
-     YORDAM
-  ===================== */
+  /* HELP */
 
-  if (text === "/yordam") {
-
+  if (command === "/yordam") {
     await sendTelegramMessage(
       chatId,
-`📋 ADMIN BUYRUQLARI
-
-/navbatlar
-➡️ Barcha navbatlar
-
-/bugun
-➡️ Bugungi navbatlar
-
-/ertaga
-➡️ Ertangi navbatlar
-
-/oy
-➡️ Shu oy navbatlari
-
-/statistika
-➡️ Umumiy statistika
-
-/shifokorlar
-➡️ Shifokorlar statistikasi
-
-/yordam
-➡️ Buyruqlar ro'yxati
-
-📌 Har bir yangi navbatda:
-
-✅ Tasdiqlash
-❌ Bekor qilish
-🗑️ O'chirish
-tugmalari mavjud.`
+      `📚 BUYRUQLAR\n\n` +
+        `/navbatlar — barcha navbatlar\n` +
+        `/bugun — bugungi navbatlar\n` +
+        `/ertaga — ertangi navbatlar\n` +
+        `/oy — shu oydagi navbatlar\n` +
+        `/statistika — umumiy statistika\n` +
+        `/shifokorlar — shifokorlar statistikasi`
     );
 
     return;
   }
 
-  /* =====================
-     NAVBATLAR
-  ===================== */
+  /* ALL BOOKINGS */
 
-  if (text === "/navbatlar") {
-
+  if (command === "/navbatlar") {
     await sendBookingList(
       chatId,
-      "BARCHA NAVBATLAR",
-      ""
+      "",
+      [],
+      "BARCHA NAVBATLAR"
     );
 
     return;
   }
 
-  /* =====================
-     BUGUN
-  ===================== */
+  /* TODAY */
 
-  if (text === "/bugun") {
-
+  if (command === "/bugun") {
     await sendBookingList(
       chatId,
-      "BUGUNGI NAVBATLAR",
-      "today"
+      `
+      WHERE date_iso =
+        (
+          CURRENT_TIMESTAMP
+          AT TIME ZONE 'Asia/Tashkent'
+        )::date
+      `,
+      [],
+      "BUGUNGI NAVBATLAR"
     );
 
     return;
   }
 
-  /* =====================
-     ERTAGA
-  ===================== */
+  /* TOMORROW */
 
-  if (text === "/ertaga") {
-
+  if (command === "/ertaga") {
     await sendBookingList(
       chatId,
-      "ERTANGI NAVBATLAR",
-      "tomorrow"
+      `
+      WHERE date_iso =
+        (
+          (
+            CURRENT_TIMESTAMP
+            AT TIME ZONE 'Asia/Tashkent'
+          )::date
+          + INTERVAL '1 day'
+        )::date
+      `,
+      [],
+      "ERTANGI NAVBATLAR"
     );
 
     return;
   }
 
-  /* =====================
-     OY
-  ===================== */
+  /* THIS MONTH */
 
-  if (text === "/oy") {
-
+  if (command === "/oy") {
     await sendBookingList(
       chatId,
-      "SHU OY NAVBATLARI",
-      "month"
+      `
+      WHERE date_iso >=
+        date_trunc(
+          'month',
+          CURRENT_TIMESTAMP
+          AT TIME ZONE 'Asia/Tashkent'
+        )::date
+
+      AND date_iso <
+        (
+          date_trunc(
+            'month',
+            CURRENT_TIMESTAMP
+            AT TIME ZONE 'Asia/Tashkent'
+          )
+          + INTERVAL '1 month'
+        )::date
+      `,
+      [],
+      "SHU OYDAGI NAVBATLAR"
     );
 
     return;
   }
 
-  /* =====================
-     STATISTIKA
-  ===================== */
+  /* STATISTICS */
 
-  if (text === "/statistika") {
-
-    await sendStatistics(
-      chatId
-    );
+  if (command === "/statistika") {
+    await sendStatistics(chatId);
 
     return;
   }
 
-  /* =====================
-     SHIFOKORLAR
-  ===================== */
+  /* DOCTORS */
 
-  if (text === "/shifokorlar") {
-
+  if (command === "/shifokorlar") {
     await sendDoctorsStatistics(
       chatId
     );
@@ -751,534 +1172,20 @@ tugmalari mavjud.`
     return;
   }
 
-  /* =====================
-     NOTO'G'RI BUYRUQ
-  ===================== */
+  /* UNKNOWN COMMAND */
 
-  if (text.startsWith("/")) {
-
-    await sendTelegramMessage(
-      chatId,
-`❓ Bunday buyruq topilmadi.
-
-Buyruqlar:
-
-/yordam
-/navbatlar
-/bugun
-/ertaga
-/oy
-/statistika
-/shifokorlar`
-    );
-  }
+  await sendTelegramMessage(
+    chatId,
+    "Noma'lum buyruq. /yordam ni yuboring."
+  );
 }
 
-/* =========================
-   STATISTIKA
-========================= */
-
-async function sendStatistics(
-  chatId
-) {
-
-  try {
-
-    const result =
-      await pool.query(`
-        SELECT
-
-          COUNT(*)::int
-          AS total,
-
-          COUNT(*) FILTER (
-            WHERE status =
-              'Kutilmoqda'
-          )::int
-          AS pending,
-
-          COUNT(*) FILTER (
-            WHERE status =
-              'Tasdiqlangan'
-          )::int
-          AS confirmed,
-
-          COUNT(*) FILTER (
-            WHERE status =
-              'Bekor qilingan'
-          )::int
-          AS cancelled,
-
-          COUNT(*) FILTER (
-            WHERE date_iso =
-              (
-                NOW()
-                AT TIME ZONE
-                'Asia/Tashkent'
-              )::date
-          )::int
-          AS today,
-
-          COUNT(*) FILTER (
-            WHERE date_iso >=
-              DATE_TRUNC(
-                'month',
-                (
-                  NOW()
-                  AT TIME ZONE
-                  'Asia/Tashkent'
-                )
-              )::date
-
-            AND date_iso <
-              (
-                DATE_TRUNC(
-                  'month',
-                  (
-                    NOW()
-                    AT TIME ZONE
-                    'Asia/Tashkent'
-                  )
-                )
-                + INTERVAL '1 month'
-              )::date
-          )::int
-          AS this_month
-
-        FROM bookings
-      `);
-
-    const stats =
-      result.rows[0];
-
-    const message =
-`📊 STOMATOLOGIYA STATISTIKASI
-
-📋 Jami navbatlar:
-${stats.total} ta
-
-⏳ Kutilmoqda:
-${stats.pending} ta
-
-✅ Tasdiqlangan:
-${stats.confirmed} ta
-
-❌ Bekor qilingan:
-${stats.cancelled} ta
-
-📅 Bugungi navbatlar:
-${stats.today} ta
-
-📆 Shu oy:
-${stats.this_month} ta`;
-
-    await sendTelegramMessage(
-      chatId,
-      message
-    );
-
-  } catch (error) {
-
-    console.error(
-      "Statistika xatosi:",
-      error
-    );
-
-    await sendTelegramMessage(
-      chatId,
-      "❌ Statistikani olishda xatolik yuz berdi."
-    );
-  }
-}
-
-/* =========================
-   SHIFOKORLAR STATISTIKASI
-========================= */
-
-async function sendDoctorsStatistics(
-  chatId
-) {
-
-  try {
-
-    const result =
-      await pool.query(`
-        SELECT
-
-          doctor_id,
-
-          COUNT(*)::int
-          AS total,
-
-          COUNT(*) FILTER (
-            WHERE status =
-              'Kutilmoqda'
-          )::int
-          AS pending,
-
-          COUNT(*) FILTER (
-            WHERE status =
-              'Tasdiqlangan'
-          )::int
-          AS confirmed,
-
-          COUNT(*) FILTER (
-            WHERE status =
-              'Bekor qilingan'
-          )::int
-          AS cancelled
-
-        FROM bookings
-
-        WHERE
-          doctor_id IS NOT NULL
-
-          AND TRIM(
-            doctor_id
-          ) <> ''
-
-        GROUP BY
-          doctor_id
-
-        ORDER BY
-          total DESC
-      `);
-
-    if (
-      result.rows.length === 0
-    ) {
-
-      await sendTelegramMessage(
-        chatId,
-`👨‍⚕️ SHIFOKORLAR STATISTIKASI
-
-📭 Hozircha shifokorlar bo‘yicha navbatlar mavjud emas.`
-      );
-
-      return;
-    }
-
-    let message =
-`👨‍⚕️ SHIFOKORLAR STATISTIKASI
-
-`;
-
-    result.rows.forEach(
-      (doctor, index) => {
-
-        message +=
-`${index + 1}. 👨‍⚕️ ${doctor.doctor_id}
-
-📋 Jami:
-${doctor.total} ta
-
-⏳ Kutilmoqda:
-${doctor.pending} ta
-
-✅ Tasdiqlangan:
-${doctor.confirmed} ta
-
-❌ Bekor qilingan:
-${doctor.cancelled} ta
-
-━━━━━━━━━━━━━━
-
-`;
-
-      }
-    );
-
-    await sendLongTelegramMessage(
-      chatId,
-      message
-    );
-
-  } catch (error) {
-
-    console.error(
-      "Shifokorlar statistikasi xatosi:",
-      error
-    );
-
-    await sendTelegramMessage(
-      chatId,
-      "❌ Shifokorlar statistikasini olishda xatolik yuz berdi."
-    );
-  }
-}
-
-/* =========================
-   NAVBATLAR RO'YXATI
-========================= */
-
-async function sendBookingList(
-  chatId,
-  title,
-  filter
-) {
-
-  try {
-
-    let query = "";
-
-    /* BARCHASI */
-
-    if (filter === "") {
-
-      query = `
-        SELECT *
-        FROM bookings
-
-        ORDER BY
-          date_iso ASC
-          NULLS LAST,
-
-          slot ASC
-          NULLS LAST,
-
-          created_at DESC
-
-        LIMIT 100
-      `;
-    }
-
-    /* BUGUN */
-
-    else if (
-      filter === "today"
-    ) {
-
-      query = `
-        SELECT *
-        FROM bookings
-
-        WHERE date_iso =
-          (
-            NOW()
-            AT TIME ZONE
-            'Asia/Tashkent'
-          )::date
-
-        ORDER BY
-          slot ASC
-          NULLS LAST,
-
-          created_at ASC
-      `;
-    }
-
-    /* ERTAGA */
-
-    else if (
-      filter === "tomorrow"
-    ) {
-
-      query = `
-        SELECT *
-        FROM bookings
-
-        WHERE date_iso =
-          (
-            (
-              NOW()
-              AT TIME ZONE
-              'Asia/Tashkent'
-            )::date + 1
-          )
-
-        ORDER BY
-          slot ASC
-          NULLS LAST,
-
-          created_at ASC
-      `;
-    }
-
-    /* SHU OY */
-
-    else if (
-      filter === "month"
-    ) {
-
-      query = `
-        SELECT *
-        FROM bookings
-
-        WHERE date_iso >=
-          DATE_TRUNC(
-            'month',
-            (
-              NOW()
-              AT TIME ZONE
-              'Asia/Tashkent'
-            )
-          )::date
-
-        AND date_iso <
-          (
-            DATE_TRUNC(
-              'month',
-              (
-                NOW()
-                AT TIME ZONE
-                'Asia/Tashkent'
-              )
-            )
-            + INTERVAL '1 month'
-          )::date
-
-        ORDER BY
-          date_iso ASC,
-
-          slot ASC
-          NULLS LAST
-      `;
-    }
-
-    const result =
-      await pool.query(query);
-
-    if (
-      result.rows.length === 0
-    ) {
-
-      await sendTelegramMessage(
-        chatId,
-`${title}
-
-📭 Hozircha navbatlar mavjud emas.`
-      );
-
-      return;
-    }
-
-    let message =
-`${title}
-
-📊 Jami:
-${result.rows.length} ta
-
-`;
-
-    result.rows.forEach(
-      (booking, index) => {
-
-        const statusIcon =
-          booking.status ===
-          "Tasdiqlangan"
-            ? "✅"
-            : booking.status ===
-              "Bekor qilingan"
-            ? "❌"
-            : "⏳";
-
-        message +=
-`${index + 1}. 👤 ${booking.name}
-📞 ${booking.phone}
-🦷 ${booking.service_title}
-💳 ${booking.tariff_name || "-"}
-💰 ${booking.tariff_price || "-"}
-👨‍⚕️ ${booking.doctor_id || "-"}
-📅 ${booking.day_label || booking.date_iso || "-"}
-🕐 ${booking.slot || "-"}
-${statusIcon} Holat: ${booking.status || "Kutilmoqda"}
-🆔 ${booking.id}
-
-`;
-
-      }
-    );
-
-    await sendLongTelegramMessage(
-      chatId,
-      message
-    );
-
-  } catch (error) {
-
-    console.error(
-      "Navbatlarni olish xatosi:",
-      error
-    );
-
-    await sendTelegramMessage(
-      chatId,
-      "❌ Navbatlarni olishda xatolik yuz berdi."
-    );
-  }
-}
-
-/* =========================
-   UZUN TELEGRAM XABAR
-========================= */
-
-async function sendLongTelegramMessage(
-  chatId,
-  text
-) {
-
-  const maxLength = 3800;
-
-  if (
-    text.length <= maxLength
-  ) {
-
-    await sendTelegramMessage(
-      chatId,
-      text
-    );
-
-    return;
-  }
-
-  let current = "";
-
-  const lines =
-    text.split("\n");
-
-  for (
-    const line of lines
-  ) {
-
-    if (
-      current.length +
-      line.length +
-      1 >
-      maxLength
-    ) {
-
-      await sendTelegramMessage(
-        chatId,
-        current
-      );
-
-      current = "";
-    }
-
-    current +=
-      line + "\n";
-  }
-
-  if (
-    current.trim()
-  ) {
-
-    await sendTelegramMessage(
-      chatId,
-      current
-    );
-  }
-}
-
-/* =========================
-   TELEGRAM POLLING
-========================= */
+/* =========================================================
+   START TELEGRAM POLLING
+========================================================= */
 
 async function startTelegramPolling() {
-
-  if (pollingRunning) {
-    return;
-  }
+  if (pollingRunning) return;
 
   pollingRunning = true;
 
@@ -1287,130 +1194,93 @@ async function startTelegramPolling() {
   );
 
   try {
-
-    const me =
-      await telegram(
-        "getMe"
-      );
-
-    if (!me.ok) {
-
-      console.error(
-        "Telegram BOT_TOKEN xatosi:",
-        me
-      );
-
-      return;
-    }
-
-    console.log(
-      `Telegram bot ulandi: @${me.result.username}`
+    const me = await telegram(
+      "getMe"
     );
 
-    while (true) {
-
-      try {
-
-        const result =
-          await telegram(
-            "getUpdates",
-            {
-              offset:
-                telegramOffset,
-
-              timeout: 30,
-
-              allowed_updates: [
-                "message",
-                "callback_query"
-              ]
-            }
-          );
-
-        if (!result.ok) {
-
-          console.error(
-            "Telegram getUpdates xatosi:",
-            result
-          );
-
-          await new Promise(
-            resolve =>
-              setTimeout(
-                resolve,
-                5000
-              )
-          );
-
-          continue;
-        }
-
-        for (
-          const update
-          of result.result
-        ) {
-
-          telegramOffset =
-            update.update_id + 1;
-
-          await handleTelegramUpdate(
-            update
-          );
-        }
-
-      } catch (error) {
-
-        console.error(
-          "Telegram polling xatosi:",
-          error.message
-        );
-
-        await new Promise(
-          resolve =>
-            setTimeout(
-              resolve,
-              5000
-            )
-        );
-      }
-    }
-
+    console.log(
+      `Telegram bot ulandi: @${me.username}`
+    );
   } catch (error) {
-
     console.error(
-      "Telegram bot ishga tushirish xatosi:",
+      "Telegram botga ulanish xatosi:",
       error.message
     );
   }
+
+  while (true) {
+    try {
+      const updates = await telegram(
+        "getUpdates",
+        {
+          offset: telegramOffset,
+          timeout: 25,
+          allowed_updates: [
+            "message",
+            "callback_query"
+          ]
+        }
+      );
+
+      for (const update of updates) {
+        telegramOffset =
+          update.update_id + 1;
+
+        try {
+          await handleTelegramUpdate(
+            update
+          );
+        } catch (error) {
+          console.error(
+            "Telegram update error:",
+            error.message
+          );
+        }
+      }
+    } catch (error) {
+      console.error(
+        "Telegram polling xatosi:",
+        error.message
+      );
+
+      await new Promise(
+        resolve =>
+          setTimeout(resolve, 5000)
+      );
+    }
+  }
 }
 
-/* =========================
-   SERVER
-========================= */
+/* =========================================================
+   STATIC WEBSITE
+========================================================= */
+
+app.use(
+  express.static(__dirname)
+);
+
+/* =========================================================
+   SERVER START
+========================================================= */
 
 async function startServer() {
-
   try {
-
     await initDatabase();
 
     app.listen(
       PORT,
       () => {
-
         console.log(
           `Server ishga tushdi: http://localhost:${PORT}`
         );
-
-        startTelegramPolling();
       }
     );
 
+    startTelegramPolling();
   } catch (error) {
-
     console.error(
-      "Serverni ishga tushirishda xatolik:",
-      error
+      "Server ishga tushmadi:",
+      error.message
     );
 
     process.exit(1);
