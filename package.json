@@ -1,0 +1,16 @@
+{
+  "name": "fargona-stomatologiya-telegram",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "node-telegram-bot-api": "^2.1.0",
+    "pg": "^8.23.0"
+  }
+}
