@@ -1,27 +1,3 @@
-<<<<<<< HEAD
-const express = require("express");
-const dotenv = require("dotenv");
-const { Pool } = require("pg");
-const { Bot, longPoll } = require("node-telegram-bot-api");
-
-dotenv.config();
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.use(express.json());
-app.use(express.static(__dirname));
-
-// =====================
-// POSTGRESQL
-// =====================
-
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : false
-=======
 require("dotenv").config();
 
 const express = require("express");
@@ -34,6 +10,9 @@ const app = express();
 const PORT = Number(process.env.PORT || 10000);
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_CHAT_ID = String(process.env.CHAT_ID || "");
+const ADMIN_USER_ID = String(
+  process.env.ADMIN_USER_ID || process.env.CHAT_ID || ""
+);
 const DATABASE_URL = process.env.DATABASE_URL;
 
 if (!BOT_TOKEN) {
@@ -46,14 +25,21 @@ if (!ADMIN_CHAT_ID) {
   process.exit(1);
 }
 
-if (!DATABASE_URL) {
-  console.error("XATO: DATABASE_URL Render Environment Variables ichida topilmadi.");
+if (!ADMIN_USER_ID) {
+  console.error(
+    "XATO: ADMIN_USER_ID Render Environment Variables ichida topilmadi."
+  );
   process.exit(1);
 }
 
-/* =========================================================
-   SECURITY
-========================================================= */
+if (!DATABASE_URL) {
+  console.error(
+    "XATO: DATABASE_URL Render Environment Variables ichida topilmadi."
+  );
+  process.exit(1);
+}
+
+/* ===================== SECURITY ===================== */
 
 app.disable("x-powered-by");
 
@@ -78,19 +64,14 @@ const bookingLimiter = rateLimit({
   }
 });
 
-/* =========================================================
-   DATABASE
-========================================================= */
+/* ===================== DATABASE ===================== */
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  },
+  ssl: { rejectUnauthorized: false },
   max: 5,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 10000
->>>>>>> 60199fd7fbf9788cecda29a72b754a2056d3c309
 });
 
 async function initDatabase() {
@@ -106,34 +87,11 @@ async function initDatabase() {
       day_label TEXT,
       date_iso DATE,
       slot TEXT,
-<<<<<<< HEAD
-=======
       status TEXT DEFAULT 'Kutilmoqda',
->>>>>>> 60199fd7fbf9788cecda29a72b754a2056d3c309
       created_at TIMESTAMPTZ DEFAULT NOW()
     )
   `);
 
-<<<<<<< HEAD
-  console.log("PostgreSQL: bookings jadvali tayyor");
-}
-
-// =====================
-// TELEGRAM BOT
-// =====================
-
-const bot = new Bot(process.env.BOT_TOKEN);
-
-const ADMIN_CHAT_ID = String(process.env.CHAT_ID);
-
-// =====================
-// TELEGRAM XABAR YUBORISH
-// =====================
-
-async function sendTelegramMessage(chatId, text) {
-  await bot.api.sendMessage({
-    chat_id: chatId,
-=======
   await pool.query(`
     ALTER TABLE bookings
     ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Kutilmoqda'
@@ -142,9 +100,7 @@ async function sendTelegramMessage(chatId, text) {
   console.log("PostgreSQL: bookings jadvali tayyor");
 }
 
-/* =========================================================
-   TELEGRAM API
-========================================================= */
+/* ===================== TELEGRAM ===================== */
 
 async function telegram(method, body = {}) {
   const response = await fetch(
@@ -180,105 +136,10 @@ async function sendTelegramMessage(chatId, text, extra = {}) {
 async function answerCallbackQuery(callbackQueryId, text = "") {
   return telegram("answerCallbackQuery", {
     callback_query_id: callbackQueryId,
->>>>>>> 60199fd7fbf9788cecda29a72b754a2056d3c309
     text
   });
 }
 
-<<<<<<< HEAD
-// =====================
-// YANGI NAVBAT
-// =====================
-
-app.post("/api/bookings", async (req, res) => {
-  try {
-    const {
-      id,
-      name,
-      phone,
-      serviceTitle,
-      tariffName,
-      tariffPrice,
-      doctorId,
-      dayLabel,
-      dateISO,
-      slot
-    } = req.body;
-
-    if (!id || !name || !phone || !serviceTitle || !dayLabel || !slot) {
-      return res.status(400).json({
-        ok: false,
-        message: "Ma'lumotlar to'liq emas"
-      });
-    }
-
-    // 1. PostgreSQL'ga saqlash
-
-    await pool.query(
-      `
-      INSERT INTO bookings
-      (
-        id,
-        name,
-        phone,
-        service_title,
-        tariff_name,
-        tariff_price,
-        doctor_id,
-        day_label,
-        date_iso,
-        slot
-      )
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-      ON CONFLICT (id) DO NOTHING
-      `,
-      [
-        id,
-        name,
-        phone,
-        serviceTitle,
-        tariffName || null,
-        tariffPrice || null,
-        doctorId || null,
-        dayLabel || null,
-        dateISO || null,
-        slot || null
-      ]
-    );
-
-    // 2. Telegramga xabar
-
-    const message = `🦷 YANGI NAVBAT
-
-👤 Bemor: ${name}
-📞 Telefon: ${phone}
-
-🦷 Xizmat: ${serviceTitle}
-💳 Tarif: ${tariffName || "-"}
-💰 Narx: ${tariffPrice || "-"}
-
-👨‍⚕️ Shifokor: ${doctorId || "-"}
-
-📅 Sana: ${dayLabel}
-📆 Sana ISO: ${dateISO || "-"}
-🕐 Vaqt: ${slot}
-
-🆔 ID: ${id}`;
-
-    await sendTelegramMessage(ADMIN_CHAT_ID, message);
-
-    res.json({
-      ok: true,
-      message: "Navbat saqlandi va Telegramga yuborildi"
-    });
-
-  } catch (error) {
-    console.error("Booking xatosi:", error);
-
-    res.status(500).json({
-      ok: false,
-      message: "Serverda xatolik yuz berdi"
-=======
 async function editTelegramMessage(
   chatId,
   messageId,
@@ -323,9 +184,7 @@ function bookingButtons(id) {
   };
 }
 
-/* =========================================================
-   VALIDATION
-========================================================= */
+/* ===================== VALIDATION ===================== */
 
 const ALLOWED_DOCTORS = new Set([
   "karimov",
@@ -441,9 +300,7 @@ function isValidDayLabel(value) {
   );
 }
 
-/* =========================================================
-   HEALTH CHECK
-========================================================= */
+/* ===================== HEALTH ===================== */
 
 app.get("/health", async (req, res) => {
   try {
@@ -454,39 +311,16 @@ app.get("/health", async (req, res) => {
       database: "ok"
     });
   } catch (error) {
-    console.error(
-      "Health database error:",
-      error.message
-    );
+    console.error("Health database error:", error.message);
 
     res.status(503).json({
       ok: false,
       database: "error"
->>>>>>> 60199fd7fbf9788cecda29a72b754a2056d3c309
     });
   }
 });
 
-<<<<<<< HEAD
-// =====================
-// NAVBATLAR RO'YXATI
-// =====================
-
-async function sendBookingList(
-  chatId,
-  title,
-  where = "",
-  params = []
-) {
-  try {
-
-    const result = await pool.query(
-      `
-      SELECT
-=======
-/* =========================================================
-   BOOKING API
-========================================================= */
+/* ===================== BOOKING API ===================== */
 
 app.post(
   "/api/bookings",
@@ -523,11 +357,7 @@ app.post(
         10
       );
 
-      const tariffPrice = Number(
-        body.tariffPrice
-      );
-
-      /* ID */
+      const tariffPrice = Number(body.tariffPrice);
 
       if (!isValidId(id)) {
         return res.status(400).json({
@@ -536,16 +366,12 @@ app.post(
         });
       }
 
-      /* NAME */
-
       if (!isValidName(name)) {
         return res.status(400).json({
           ok: false,
           error: "Ism noto'g'ri."
         });
       }
-
-      /* PHONE */
 
       if (!isValidPhone(phone)) {
         return res.status(400).json({
@@ -555,8 +381,6 @@ app.post(
         });
       }
 
-      /* SERVICE */
-
       if (!ALLOWED_SERVICES.has(serviceTitle)) {
         return res.status(400).json({
           ok: false,
@@ -564,16 +388,12 @@ app.post(
         });
       }
 
-      /* DOCTOR */
-
       if (!ALLOWED_DOCTORS.has(doctorId)) {
         return res.status(400).json({
           ok: false,
           error: "Shifokor noto'g'ri."
         });
       }
-
-      /* TARIFF */
 
       if (
         !Object.prototype.hasOwnProperty.call(
@@ -587,21 +407,15 @@ app.post(
         });
       }
 
-      /* PRICE */
-
       if (
         !Number.isSafeInteger(tariffPrice) ||
-        !ALLOWED_TARIFFS[tariffName].has(
-          tariffPrice
-        )
+        !ALLOWED_TARIFFS[tariffName].has(tariffPrice)
       ) {
         return res.status(400).json({
           ok: false,
           error: "Tarif narxi noto'g'ri."
         });
       }
-
-      /* DAY */
 
       if (!isValidDayLabel(dayLabel)) {
         return res.status(400).json({
@@ -610,16 +424,12 @@ app.post(
         });
       }
 
-      /* DATE */
-
       if (!isValidDateISO(dateISO)) {
         return res.status(400).json({
           ok: false,
           error: "Sana formati noto'g'ri."
         });
       }
-
-      /* TIME */
 
       if (!ALLOWED_SLOTS.has(slot)) {
         return res.status(400).json({
@@ -628,27 +438,17 @@ app.post(
         });
       }
 
-      /* DUPLICATE BOOKING */
-
       const existing = await pool.query(
-        `
-        SELECT id
-        FROM bookings
-        WHERE id = $1
-        LIMIT 1
-        `,
+        "SELECT id FROM bookings WHERE id = $1 LIMIT 1",
         [id]
       );
 
       if (existing.rowCount > 0) {
         return res.status(409).json({
           ok: false,
-          error:
-            "Bu booking allaqachon mavjud."
+          error: "Bu booking allaqachon mavjud."
         });
       }
-
-      /* INSERT */
 
       await pool.query(
         `
@@ -668,17 +468,7 @@ app.post(
         )
         VALUES
         (
-          $1,
-          $2,
-          $3,
-          $4,
-          $5,
-          $6,
-          $7,
-          $8,
-          $9,
-          $10,
-          'Kutilmoqda'
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'Kutilmoqda'
         )
         `,
         [
@@ -694,8 +484,6 @@ app.post(
           slot
         ]
       );
-
-      /* TELEGRAM */
 
       const telegramText =
         `🦷 YANGI NAVBAT\n\n` +
@@ -717,8 +505,7 @@ app.post(
           ADMIN_CHAT_ID,
           telegramText,
           {
-            reply_markup:
-              bookingButtons(id)
+            reply_markup: bookingButtons(id)
           }
         );
       } catch (telegramError) {
@@ -747,17 +534,16 @@ app.post(
   }
 );
 
-/* =========================================================
-   ADMIN
-========================================================= */
+/* ===================== ADMIN SECURITY ===================== */
 
-function isAdmin(chatId) {
-  return String(chatId) === ADMIN_CHAT_ID;
+function isAdmin(chatId, userId) {
+  return (
+    String(chatId || "") === ADMIN_CHAT_ID &&
+    String(userId || "") === ADMIN_USER_ID
+  );
 }
 
-/* =========================================================
-   TELEGRAM CALLBACK BUTTONS
-========================================================= */
+/* ===================== CALLBACK ===================== */
 
 async function handleCallbackQuery(
   callbackQuery
@@ -766,13 +552,17 @@ async function handleCallbackQuery(
     callbackQuery.message?.chat?.id || ""
   );
 
+  const userId = String(
+    callbackQuery.from?.id || ""
+  );
+
   const messageId =
     callbackQuery.message?.message_id;
 
   const data =
     callbackQuery.data || "";
 
-  if (!isAdmin(chatId)) {
+  if (!isAdmin(chatId, userId)) {
     await answerCallbackQuery(
       callbackQuery.id,
       "Sizda bu amalni bajarish huquqi yo'q."
@@ -782,9 +572,8 @@ async function handleCallbackQuery(
   }
 
   const match =
-    /^(confirm|cancel|delete):([a-zA-Z0-9_-]+)$/.exec(
-      data
-    );
+    /^(confirm|cancel|delete):([a-zA-Z0-9_-]+)$/
+      .exec(data);
 
   if (!match) {
     await answerCallbackQuery(
@@ -803,7 +592,6 @@ async function handleCallbackQuery(
       `
       SELECT
         id,
->>>>>>> 60199fd7fbf9788cecda29a72b754a2056d3c309
         name,
         phone,
         service_title,
@@ -811,29 +599,6 @@ async function handleCallbackQuery(
         tariff_price,
         doctor_id,
         day_label,
-<<<<<<< HEAD
-        date_iso,
-        slot,
-        created_at
-      FROM bookings
-      ${where}
-      ORDER BY
-        date_iso ASC NULLS LAST,
-        slot ASC NULLS LAST,
-        created_at DESC
-      LIMIT 30
-      `,
-      params
-    );
-
-    if (result.rows.length === 0) {
-
-      await sendTelegramMessage(
-        chatId,
-        `${title}
-
-📭 Hozircha navbatlar yo‘q.`
-=======
         slot,
         status
       FROM bookings
@@ -846,145 +611,12 @@ async function handleCallbackQuery(
       await answerCallbackQuery(
         callbackQuery.id,
         "Navbat topilmadi."
->>>>>>> 60199fd7fbf9788cecda29a72b754a2056d3c309
       );
 
       return;
     }
 
-<<<<<<< HEAD
-    let message = `${title}\n\n`;
-
-    result.rows.forEach((b, index) => {
-
-      message += `${index + 1}. 👤 ${b.name}
-📞 ${b.phone}
-🦷 ${b.service_title}
-💳 ${b.tariff_name || "-"} — ${b.tariff_price || "-"}
-👨‍⚕️ ${b.doctor_id || "-"}
-📅 ${b.day_label || b.date_iso || "-"}
-🕐 ${b.slot || "-"}
-────────────
-
-`;
-    });
-
-    await sendTelegramMessage(chatId, message);
-
-  } catch (error) {
-
-    console.error("Ro'yxat xatosi:", error);
-
-    await sendTelegramMessage(
-      chatId,
-      "❌ Navbatlarni olishda xatolik yuz berdi."
-    );
-  }
-}
-
-// =====================
-// ADMIN TEKSHIRISH
-// =====================
-
-function isAdmin(msg) {
-  return String(msg.chat.id) === ADMIN_CHAT_ID;
-}
-
-// =====================
-// TELEGRAM UPDATE'LAR
-// =====================
-
-async function handleTelegramUpdate(update) {
-
-  if (!update.message || !update.message.text) {
-    return;
-  }
-
-  const msg = update.message;
-  const text = msg.text.trim();
-
-  if (!isAdmin(msg)) {
-    return;
-  }
-
-  // =====================
-  // /navbatlar
-  // =====================
-
-  if (text === "/navbatlar") {
-
-    await sendBookingList(
-      String(msg.chat.id),
-      "📋 BARCHA NAVBATLAR"
-    );
-
-    return;
-  }
-
-  // =====================
-  // /bugun
-  // =====================
-
-  if (text === "/bugun") {
-
-    const today = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Tashkent"
-    }).format(new Date());
-
-    await sendBookingList(
-      String(msg.chat.id),
-      `📅 BUGUNGI NAVBATLAR — ${today}`,
-      `WHERE date_iso = $1`,
-      [today]
-    );
-
-    return;
-  }
-
-  // =====================
-  // /ertaga
-  // =====================
-
-  if (text === "/ertaga") {
-
-    const now = new Date();
-
-    const tomorrow = new Date(
-      now.getTime() + 24 * 60 * 60 * 1000
-    );
-
-    const tomorrowDate = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Asia/Tashkent"
-    }).format(tomorrow);
-
-    await sendBookingList(
-      String(msg.chat.id),
-      `📅 ERTANGI NAVBATLAR — ${tomorrowDate}`,
-      `WHERE date_iso = $1`,
-      [tomorrowDate]
-    );
-
-    return;
-  }
-
-  // =====================
-  // /yordam
-  // =====================
-
-  if (text === "/yordam") {
-
-    await sendTelegramMessage(
-      String(msg.chat.id),
-      `🦷 ADMIN PANEL
-
-📋 /navbatlar — barcha navbatlar
-📅 /bugun — bugungi navbatlar
-📅 /ertaga — ertangi navbatlar
-❓ /yordam — buyruqlar ro‘yxati`
-=======
     const booking = result.rows[0];
-
-    /* DELETE */
 
     if (action === "delete") {
       await pool.query(
@@ -1015,8 +647,6 @@ async function handleTelegramUpdate(update) {
       return;
     }
 
-    /* STATUS */
-
     const newStatus =
       action === "confirm"
         ? "Tasdiqlangan"
@@ -1028,10 +658,7 @@ async function handleTelegramUpdate(update) {
       SET status = $1
       WHERE id = $2
       `,
-      [
-        newStatus,
-        bookingId
-      ]
+      [newStatus, bookingId]
     );
 
     await editTelegramMessage(
@@ -1078,17 +705,18 @@ function messageText(booking) {
   );
 }
 
-/* =========================================================
-   TELEGRAM BOOKING LIST
-========================================================= */
+/* ===================== LIST COMMANDS ===================== */
 
 async function sendBookingList(
   chatId,
+  userId,
   whereSql = "",
   params = [],
   title = "NAVBATLAR"
 ) {
-  if (!isAdmin(chatId)) return;
+  if (!isAdmin(chatId, userId)) {
+    return;
+  }
 
   const result = await pool.query(
     `
@@ -1168,12 +796,15 @@ async function sendLongTelegramMessage(
   }
 }
 
-/* =========================================================
-   STATISTICS
-========================================================= */
+/* ===================== STATISTICS ===================== */
 
-async function sendStatistics(chatId) {
-  if (!isAdmin(chatId)) return;
+async function sendStatistics(
+  chatId,
+  userId
+) {
+  if (!isAdmin(chatId, userId)) {
+    return;
+  }
 
   const result = await pool.query(`
     SELECT
@@ -1193,29 +824,28 @@ async function sendStatistics(chatId) {
 
       COUNT(*) FILTER (
         WHERE date_iso =
-          (
-            CURRENT_TIMESTAMP
-            AT TIME ZONE 'Asia/Tashkent'
-          )::date
+        (
+          CURRENT_TIMESTAMP
+          AT TIME ZONE 'Asia/Tashkent'
+        )::date
       )::int AS today,
 
       COUNT(*) FILTER (
         WHERE date_iso >=
+        date_trunc(
+          'month',
+          CURRENT_TIMESTAMP
+          AT TIME ZONE 'Asia/Tashkent'
+        )::date
+
+        AND date_iso <
+        (
           date_trunc(
             'month',
             CURRENT_TIMESTAMP
             AT TIME ZONE 'Asia/Tashkent'
-          )::date
-
-        AND date_iso <
-          (
-            date_trunc(
-              'month',
-              CURRENT_TIMESTAMP
-              AT TIME ZONE 'Asia/Tashkent'
-            )
-            + INTERVAL '1 month'
-          )::date
+          ) + INTERVAL '1 month'
+        )::date
       )::int AS month
 
     FROM bookings
@@ -1235,14 +865,13 @@ async function sendStatistics(chatId) {
   );
 }
 
-/* =========================================================
-   DOCTORS STATISTICS
-========================================================= */
-
 async function sendDoctorsStatistics(
-  chatId
+  chatId,
+  userId
 ) {
-  if (!isAdmin(chatId)) return;
+  if (!isAdmin(chatId, userId)) {
+    return;
+  }
 
   const result = await pool.query(`
     SELECT
@@ -1278,75 +907,10 @@ async function sendDoctorsStatistics(
     await sendTelegramMessage(
       chatId,
       "👨‍⚕️ Shifokorlar bo'yicha hali ma'lumot yo'q."
->>>>>>> 60199fd7fbf9788cecda29a72b754a2056d3c309
     );
 
     return;
   }
-<<<<<<< HEAD
-}
-
-// =====================
-// TELEGRAM POLLING
-// =====================
-
-async function startTelegramBot() {
-
-  console.log("Telegram bot polling ishga tushmoqda...");
-
-  try {
-
-    const updates = await longPoll(
-      bot,
-      async (update) => {
-        try {
-          await handleTelegramUpdate(update);
-        } catch (error) {
-          console.error(
-            "Telegram update xatosi:",
-            error
-          );
-        }
-      }
-    );
-
-    console.log("Telegram polling tugadi:", updates);
-
-  } catch (error) {
-
-    console.error(
-      "Telegram polling xatosi:",
-      error
-    );
-  }
-}
-
-// =====================
-// SERVER
-// =====================
-
-async function startServer() {
-
-  try {
-
-    await initDatabase();
-
-    app.listen(PORT, () => {
-
-      console.log(
-        `Server ishga tushdi: http://localhost:${PORT}`
-      );
-
-    });
-
-    startTelegramBot();
-
-  } catch (error) {
-
-    console.error(
-      "Serverni ishga tushirishda xatolik:",
-      error
-=======
 
   const lines = [
     "👨‍⚕️ SHIFOKORLAR BO‘YICHA STATISTIKA",
@@ -1370,18 +934,12 @@ async function startServer() {
   );
 }
 
-/* =========================================================
-   TELEGRAM POLLING
-========================================================= */
+/* ===================== TELEGRAM POLLING ===================== */
 
 let telegramOffset = 0;
 let pollingRunning = false;
 
-async function handleTelegramUpdate(
-  update
-) {
-  /* CALLBACK */
-
+async function handleTelegramUpdate(update) {
   if (update.callback_query) {
     await handleCallbackQuery(
       update.callback_query
@@ -1392,17 +950,26 @@ async function handleTelegramUpdate(
 
   const message = update.message;
 
-  if (!message?.text) return;
+  if (!message?.text) {
+    return;
+  }
 
   const chatId = String(
     message.chat.id
   );
 
+  const userId = String(
+    message.from?.id || ""
+  );
+
   const text = message.text.trim();
 
-  /* ADMIN CHECK */
-
-  if (!isAdmin(chatId)) {
+  /*
+    MUHIM:
+    Endi faqat chat ID emas,
+    chat ID + user ID birgalikda tekshiriladi.
+  */
+  if (!isAdmin(chatId, userId)) {
     await sendTelegramMessage(
       chatId,
       "⛔ Bu bot faqat administrator uchun."
@@ -1411,12 +978,9 @@ async function handleTelegramUpdate(
     return;
   }
 
-  const command =
-    text
-      .split(/\s+/)[0]
-      .toLowerCase();
-
-  /* START */
+  const command = text
+    .split(/\s+/)[0]
+    .toLowerCase();
 
   if (command === "/start") {
     await sendTelegramMessage(
@@ -1434,8 +998,6 @@ async function handleTelegramUpdate(
     return;
   }
 
-  /* HELP */
-
   if (command === "/yordam") {
     await sendTelegramMessage(
       chatId,
@@ -1451,11 +1013,10 @@ async function handleTelegramUpdate(
     return;
   }
 
-  /* ALL BOOKINGS */
-
   if (command === "/navbatlar") {
     await sendBookingList(
       chatId,
+      userId,
       "",
       [],
       "BARCHA NAVBATLAR"
@@ -1464,11 +1025,10 @@ async function handleTelegramUpdate(
     return;
   }
 
-  /* TODAY */
-
   if (command === "/bugun") {
     await sendBookingList(
       chatId,
+      userId,
       `
       WHERE date_iso =
         (
@@ -1483,11 +1043,10 @@ async function handleTelegramUpdate(
     return;
   }
 
-  /* TOMORROW */
-
   if (command === "/ertaga") {
     await sendBookingList(
       chatId,
+      userId,
       `
       WHERE date_iso =
         (
@@ -1505,11 +1064,10 @@ async function handleTelegramUpdate(
     return;
   }
 
-  /* THIS MONTH */
-
   if (command === "/oy") {
     await sendBookingList(
       chatId,
+      userId,
       `
       WHERE date_iso >=
         date_trunc(
@@ -1524,8 +1082,7 @@ async function handleTelegramUpdate(
             'month',
             CURRENT_TIMESTAMP
             AT TIME ZONE 'Asia/Tashkent'
-          )
-          + INTERVAL '1 month'
+          ) + INTERVAL '1 month'
         )::date
       `,
       [],
@@ -1535,25 +1092,23 @@ async function handleTelegramUpdate(
     return;
   }
 
-  /* STATISTICS */
-
   if (command === "/statistika") {
-    await sendStatistics(chatId);
-
-    return;
-  }
-
-  /* DOCTORS */
-
-  if (command === "/shifokorlar") {
-    await sendDoctorsStatistics(
-      chatId
+    await sendStatistics(
+      chatId,
+      userId
     );
 
     return;
   }
 
-  /* UNKNOWN COMMAND */
+  if (command === "/shifokorlar") {
+    await sendDoctorsStatistics(
+      chatId,
+      userId
+    );
+
+    return;
+  }
 
   await sendTelegramMessage(
     chatId,
@@ -1561,12 +1116,12 @@ async function handleTelegramUpdate(
   );
 }
 
-/* =========================================================
-   START TELEGRAM POLLING
-========================================================= */
+/* ===================== POLLING ===================== */
 
 async function startTelegramPolling() {
-  if (pollingRunning) return;
+  if (pollingRunning) {
+    return;
+  }
 
   pollingRunning = true;
 
@@ -1575,9 +1130,7 @@ async function startTelegramPolling() {
   );
 
   try {
-    const me = await telegram(
-      "getMe"
-    );
+    const me = await telegram("getMe");
 
     console.log(
       `Telegram bot ulandi: @${me.username}`
@@ -1625,52 +1178,37 @@ async function startTelegramPolling() {
       );
 
       await new Promise(
-        resolve =>
-          setTimeout(resolve, 5000)
+        resolve => setTimeout(resolve, 5000)
       );
     }
   }
 }
 
-/* =========================================================
-   STATIC WEBSITE
-========================================================= */
+/* ===================== WEBSITE ===================== */
 
-app.use(
-  express.static(__dirname)
-);
+app.use(express.static(__dirname));
 
-/* =========================================================
-   SERVER START
-========================================================= */
+/* ===================== START ===================== */
 
 async function startServer() {
   try {
     await initDatabase();
 
-    app.listen(
-      PORT,
-      () => {
-        console.log(
-          `Server ishga tushdi: http://localhost:${PORT}`
-        );
-      }
-    );
+    app.listen(PORT, () => {
+      console.log(
+        `Server ishga tushdi: http://localhost:${PORT}`
+      );
+    });
 
     startTelegramPolling();
   } catch (error) {
     console.error(
       "Server ishga tushmadi:",
       error.message
->>>>>>> 60199fd7fbf9788cecda29a72b754a2056d3c309
     );
 
     process.exit(1);
   }
 }
 
-<<<<<<< HEAD
 startServer();
-=======
-startServer();
->>>>>>> 60199fd7fbf9788cecda29a72b754a2056d3c309
